@@ -1,0 +1,1 @@
+<AVRWorkspace><IOSettings><CurrentRegisters><PORTE><register register="PORTE" group="I/O Port E" display="2" locked="0"/></PORTE><PORTE><register register="DDRE" group="I/O Port E" display="2" locked="0"/></PORTE><PORTE><register register="PINE" group="I/O Port E" display="2" locked="0"/></PORTE></CurrentRegisters></IOSettings><part name="ATmega128"/><Files/></AVRWorkspace>
