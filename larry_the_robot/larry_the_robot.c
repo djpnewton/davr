@@ -1,6 +1,6 @@
 /*
 /
-/ Motor PMW
+/ Larry the Robot
 /
 / (ATMega128)
 /
