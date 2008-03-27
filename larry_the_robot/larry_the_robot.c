@@ -12,7 +12,7 @@
 #include <avr/sleep.h>
 
 /* Mode */
-enum { MSTOP, MTRIMPOT, MDANCE };
+enum { MSTOP, MLINE_FOLLOW, MDANCE, MTRIMPOT };
 volatile int g_mode = MSTOP;
 
 void beep(int freq, int len);
@@ -60,22 +60,51 @@ void init_pwm()
 	DDRA = 0x00;
 }
 
-void init_adc()
+enum { ADC_TRIMPOT, ADC_LINE_SENSOR };
+volatile int g_adc_mode;
+volatile int g_adc_chan;
+
+void init_adc(int mode)
 {
-    ADCSRA |= (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0); // Set ADC prescalar to 128 - 125KHz sample rate @ 16MHz
+    ADCSRA |= _BV(ADPS2) | _BV(ADPS1) | _BV(ADPS0); // Set ADC prescalar to 128 - 125KHz sample rate @ 16MHz
 
-    ADMUX |= (1 << REFS0); // Set ADC reference to AVCC
-    ADMUX |= (1 << ADLAR); // Left adjust ADC result to allow easy 8 bit reading
+    ADMUX |= _BV(REFS0); // Set ADC reference to AVCC
+    ADMUX |= _BV(ADLAR); // Left adjust ADC result to allow easy 8 bit reading
 
-    // No MUX values needed to be changed to use ADC0
+	ADMUX &= ~_BV(MUX0) & ~_BV(MUX1) & ~_BV(MUX2);
 
-    ADCSRA |= (1 << ADFR);  // Set ADC to Free-Running Mode
+	if (mode == ADC_TRIMPOT)
+	{
+	    // turn on trimpot
+    	DDRF |= 2;
+    	PORTF |= 2;
+    	DDRA |= _BV(7);
+    	PORTA &= ~_BV(7);
 
-    ADCSRA |= (1 << ADEN);  // Enable ADC
+		 // do nothing to ADMUX use ADC0
 
-    ADCSRA |= (1 << ADIE);  // Enable ADC Interrupt
+	    ADCSRA |= _BV(ADFR);  // Set ADC to Free-Running Mode
+	}
+	else if (mode == ADC_LINE_SENSOR)
+	{
+		// turn on ADC pins
+		DDRF = 0;
+		PINF = 0;
+		PINF |= _BV(0) | _BV(1) | _BV(2) | _BV(3);
 
-    ADCSRA |= (1 << ADSC);  // Start A2D Conversions 
+		// do nothing to ADMUX, start with ADC0
+		g_adc_chan = 0;
+
+		ADCSRA &= ~_BV(ADFR); // Set ADC to Single Conversion Mode
+	}
+
+    ADCSRA |= _BV(ADEN);  // Enable ADC
+
+    ADCSRA |= _BV(ADIE);  // Enable ADC Interrupt
+
+    ADCSRA |= _BV(ADSC);  // Start A2D Conversions 
+
+	g_adc_mode = mode;
 }
 
 void init_status_led()
@@ -120,7 +149,7 @@ void init_piezo_timer()
 int main(void)
  {
     init_pwm();
-    init_adc();
+    //init_adc(ADC_LINE_SENSOR);
     init_status_led();
 	init_button_timer();
 	//init_piezo_timer();
@@ -128,12 +157,6 @@ int main(void)
     // turn off motors
     DDRG = 0xFF;
     PORTG = 0; 
-
-     // turn on trimpot
-    DDRF |= 2;
-    PORTF |= 2;
-    DDRA |= _BV(7);
-    PORTA &= ~_BV(7);
 
     // Enable global interupts
     sei(); 
@@ -144,8 +167,32 @@ int main(void)
     }
 }
 
+enum { LEFT, RIGHT };
+enum { STOP = 0, SLOW = 750, MED = 850, FAST = 1000 };
+void motor_speed(int motor, int speed)
+{
+	switch (motor)
+	{
+		case LEFT:
+			OCRA = speed;
+			return;
+		case RIGHT:
+			OCRC = speed;
+			return;
+	}
+}
+
+volatile int g_line_left_last;
+volatile int g_line_left2;
+volatile int g_line_left1;
+volatile int g_line_right1;
+volatile int g_line_right2;
+volatile int g_line_right_last;
+
 ISR(ADC_vect)
 {
+    const float adc_max = 255;
+    const float adc_half = adc_max / 2.0;
 
 	if (g_mode == MSTOP)
 	{
@@ -155,8 +202,6 @@ ISR(ADC_vect)
 	else if (g_mode == MTRIMPOT)
 	{
 	    int adc = ADCH;
-	    const float adc_max = 255;
-	    const float adc_half = adc_max / 2.0;
 
 	    if (adc <= adc_half)
 	    {
@@ -173,6 +218,114 @@ ISR(ADC_vect)
 	        OCRC = ((adc - adc_half) / adc_half) * TIMER1_TOP;
 	    }
 	}
+	else if (g_mode == MLINE_FOLLOW)
+	{
+		PORTG = 5; // motors forward
+		int adc_comp = adc_max - 20;
+
+		if (g_adc_chan == 0)
+		{
+			g_line_left2 = ADCH;
+			if (g_line_left2 > adc_comp)
+			{
+				g_line_left_last = 1;
+				g_line_right_last = 0;
+			}
+		}
+		else if (g_adc_chan == 1)
+		{
+			g_line_left1 = ADCH;
+			if (g_line_left1 > adc_comp)
+			{
+				g_line_left_last = 1;
+				g_line_right_last = 0;
+			}
+		}
+		else if (g_adc_chan == 2)
+		{
+			g_line_right1 = ADCH;
+			if (g_line_right1 > adc_comp)
+			{
+				g_line_left_last = 0;
+				g_line_right_last = 1;
+			}
+		}
+		else if (g_adc_chan == 3)
+		{
+			g_line_right2 = ADCH;
+			if (g_line_right2 > adc_comp)
+			{
+				g_line_left_last = 0;
+				g_line_right_last = 1;
+			}	
+		}
+
+		if (g_line_left2 > adc_comp)
+		{
+			motor_speed(LEFT, STOP);
+			motor_speed(RIGHT, MED);
+		}
+		else if (g_line_left1 > adc_comp && g_line_right1 > adc_comp)
+		{
+			motor_speed(LEFT, MED);
+			motor_speed(RIGHT, MED);			
+		}
+		if (g_line_left1 > adc_comp)
+		{
+			motor_speed(LEFT, SLOW);
+			motor_speed(RIGHT, MED);
+		}		
+		else if (g_line_right1 > adc_comp)
+		{
+			motor_speed(LEFT, MED);
+			motor_speed(RIGHT, SLOW);
+		}
+		else if (g_line_right2 > adc_comp)
+		{
+			motor_speed(LEFT, MED);
+			motor_speed(RIGHT, STOP);
+		}
+		else if (g_line_left_last == 1)
+		{
+			motor_speed(LEFT, STOP);
+			motor_speed(RIGHT, MED);
+		}
+		else if (g_line_right_last == 1)
+		{
+			motor_speed(LEFT, MED);
+			motor_speed(RIGHT, STOP);
+		}		
+		else
+		{
+			motor_speed(LEFT, MED);
+			motor_speed(RIGHT, MED);
+		}
+	}
+
+	if (g_adc_mode == ADC_LINE_SENSOR)
+	{
+		g_adc_chan++;
+		if (g_adc_chan > 3)
+			g_adc_chan = 0;
+
+		ADMUX &= ~_BV(MUX0) & ~_BV(MUX1) & ~_BV(MUX2);
+		switch (g_adc_chan)
+		{
+			case 0:
+				break;
+			case 1:
+				ADMUX |= _BV(MUX0);
+				break;
+			case 2:
+				ADMUX |= _BV(MUX1);
+				break;
+			case 3:
+				ADMUX |= _BV(MUX1) | _BV(MUX0);
+				break;
+		}
+
+		ADCSRA |= _BV(ADSC);  // Start A2D Conversion
+	}
 }
 
 ISR(TIMER1_OVF_vect)
@@ -180,41 +333,29 @@ ISR(TIMER1_OVF_vect)
 
 }
 
-enum { LEFT, RIGHT };
-enum { STOP = 0, SLOW = 700, MED = 800, FAST = 1000 };
 volatile uint16_t g_dance_cnt = 0;
 enum { D1 = 0, D2 = 100, D3 = 200, D4 = 250, D5 = 450, DSTOP = 600 };
 volatile int g_mode_switch = 0;
 
-void motor_speed(int motor, int speed)
-{
-	switch (motor)
-	{
-		case LEFT:
-			OCRA = speed;
-			return;
-		case RIGHT:
-			OCRC = speed;
-			return;
-	}
-}
-
-
 ISR(TIMER0_COMP_vect)
 {
-	// if button is pressed change gMode
+	// if button is pressed change g_mode
 	if (PINA & _BV(3))
 		g_mode_switch = 1;
 	else if (g_mode_switch)
 	{
 		g_mode++;
-		if (g_mode > MDANCE)
+		if (g_mode >= MTRIMPOT) // skip trimpot for now
 			g_mode = MSTOP;
+		else if (g_mode == MLINE_FOLLOW)
+			init_adc(ADC_LINE_SENSOR);
 		else if (g_mode == MDANCE)
 		{
 			PORTG = 5; // motors forward
 			g_dance_cnt = 0; // reset dance counter
 		}
+		else if (g_mode == MTRIMPOT)
+			init_adc(ADC_TRIMPOT);
 		g_mode_switch = 0;
 
 		beep(100 + g_mode * 10, 250);
