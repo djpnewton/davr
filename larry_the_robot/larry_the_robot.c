@@ -10,6 +10,7 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
+#include <stdbool.h>
 
 /* Mode */
 enum { MSTOP, MLINE_FOLLOW, MDANCE, MTRIMPOT };
@@ -107,14 +108,11 @@ void init_adc(int mode)
 	g_adc_mode = mode;
 }
 
+volatile int g_status_led = 0;
+
 void init_status_led()
 {
     DDRE = _BV(PE3) | _BV(PE4) | _BV(PE5); // LED output at pins PE3-5
-    PORTE = _BV(PE3); // PE3 on, PE4 ground, PE5 off
-    TCCR3B = _BV(WGM12); // Configure timer 3 for CTC mode
-    TCCR3A = _BV(COM3A0) | _BV(COM3C0); // CTC mode, toggle on compare match
-    OCR3A = 65200; // set CTC compare value to 1Hz at 16Mhz clock, with a prescaler of 64
-    TCCR3B |= /*_BV(CS30) | _BV(CS31) |*/ _BV(CS32); // prescaler Fcpu / 64
 }
 
 void init_button_timer()
@@ -168,7 +166,7 @@ int main(void)
 }
 
 enum { LEFT, RIGHT };
-enum { STOP = 0, SLOW = 750, MED = 850, FAST = 1000 };
+enum { STOP = 0, SLOW = 750, SLOWMED = 800, MED = 850, FAST = 1000 };
 void motor_speed(int motor, int speed)
 {
 	switch (motor)
@@ -182,12 +180,12 @@ void motor_speed(int motor, int speed)
 	}
 }
 
-volatile int g_line_left_last;
-volatile int g_line_left2;
-volatile int g_line_left1;
-volatile int g_line_right1;
-volatile int g_line_right2;
-volatile int g_line_right_last;
+volatile bool g_line_left_last;
+volatile bool g_line_left2;
+volatile bool g_line_left1;
+volatile bool g_line_right1;
+volatile bool g_line_right2;
+volatile bool g_line_right_last;
 
 ISR(ADC_vect)
 {
@@ -225,72 +223,80 @@ ISR(ADC_vect)
 
 		if (g_adc_chan == 0)
 		{
-			g_line_left2 = ADCH;
-			if (g_line_left2 > adc_comp)
+			if (ADCH > adc_comp)
 			{
-				g_line_left_last = 1;
-				g_line_right_last = 0;
+                g_line_left2 = true;
+				g_line_left_last = true;
+				g_line_right_last = false;
 			}
+            else
+                g_line_left2 = false;
 		}
 		else if (g_adc_chan == 1)
 		{
-			g_line_left1 = ADCH;
-			if (g_line_left1 > adc_comp)
+			if (ADCH > adc_comp)
 			{
-				g_line_left_last = 1;
-				g_line_right_last = 0;
+                g_line_left1 = true;
+				g_line_left_last = true;
+				g_line_right_last = false;
 			}
+            else
+                g_line_left1 = false;
 		}
 		else if (g_adc_chan == 2)
 		{
-			g_line_right1 = ADCH;
-			if (g_line_right1 > adc_comp)
+			if (ADCH > adc_comp)
 			{
+                g_line_right1 = true;
 				g_line_left_last = 0;
-				g_line_right_last = 1;
+				g_line_right_last = true;
 			}
+            else
+                g_line_right1 = false;
 		}
 		else if (g_adc_chan == 3)
 		{
-			g_line_right2 = ADCH;
-			if (g_line_right2 > adc_comp)
+			if (ADCH > adc_comp)
 			{
-				g_line_left_last = 0;
-				g_line_right_last = 1;
+                g_line_right2 = true;
+				g_line_left_last = false;
+				g_line_right_last = true;
 			}	
+            else
+                g_line_right2 = false;
 		}
 
-		if (g_line_left2 > adc_comp)
+		if (g_line_left2)
 		{
-			motor_speed(LEFT, STOP);
+			motor_speed(LEFT, SLOW);
 			motor_speed(RIGHT, MED);
 		}
-		else if (g_line_left1 > adc_comp && g_line_right1 > adc_comp)
+		else if (g_line_left1 && g_line_right1)
 		{
 			motor_speed(LEFT, MED);
 			motor_speed(RIGHT, MED);			
 		}
-		if (g_line_left1 > adc_comp)
+		if (g_line_left1)
 		{
-			motor_speed(LEFT, SLOW);
+			motor_speed(LEFT, SLOWMED);
 			motor_speed(RIGHT, MED);
 		}		
-		else if (g_line_right1 > adc_comp)
+		else if (g_line_right1)
+		{
+			motor_speed(LEFT, MED);
+			motor_speed(RIGHT, SLOWMED);
+		}
+		else if (g_line_right2)
 		{
 			motor_speed(LEFT, MED);
 			motor_speed(RIGHT, SLOW);
 		}
-		else if (g_line_right2 > adc_comp)
-		{
-			motor_speed(LEFT, MED);
-			motor_speed(RIGHT, STOP);
-		}
-		else if (g_line_left_last == 1)
+		else if (g_line_left_last)
 		{
 			motor_speed(LEFT, STOP);
 			motor_speed(RIGHT, MED);
 		}
-		else if (g_line_right_last == 1)
+		else if (g_line_right_last)
 		{
 			motor_speed(LEFT, MED);
 			motor_speed(RIGHT, STOP);
@@ -397,6 +403,16 @@ ISR(TIMER0_COMP_vect)
 		}
 		g_dance_cnt++;
 	}
+
+    // status led
+    if (g_status_led % 10 == 0)
+    {
+        if (PORTE == _BV(PE5))
+           PORTE = _BV(PE3); // PE3 on, PE4 ground, PE5 off
+        else
+            PORTE = _BV(PE5); // PE3 off, PE4 ground, PE5 on
+    }
+    g_status_led++;
 }
 
 volatile int g_beep_count;
