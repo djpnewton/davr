@@ -115,7 +115,7 @@ void init_status_led()
     DDRE = _BV(PE3) | _BV(PE4) | _BV(PE5); // LED output at pins PE3-5
 }
 
-void init_button_timer()
+void init_button_port()
 {
 	// output PORTA.1
 	DDRA = 255;
@@ -123,6 +123,11 @@ void init_button_timer()
 	DDRA &= ~_BV(3);
 	PORTA |= _BV(1);
 	//PINA = 0;
+}
+
+void init_button_timer()
+{
+	init_button_port();
 
 	TCCR0 |= _BV(WGM01); // configure timer 0 for CTC mode
 	TIMSK |= _BV(OCIE0);
@@ -221,7 +226,7 @@ ISR(ADC_vect)
 		PORTG = 5; // motors forward
 		int adc_comp = adc_max - 20;
 
-		if (g_adc_chan == 0)
+		if (g_adc_chan == 3)
 		{
 			if (ADCH > adc_comp)
 			{
@@ -232,7 +237,7 @@ ISR(ADC_vect)
             else
                 g_line_left2 = false;
 		}
-		else if (g_adc_chan == 1)
+		else if (g_adc_chan == 2)
 		{
 			if (ADCH > adc_comp)
 			{
@@ -243,7 +248,7 @@ ISR(ADC_vect)
             else
                 g_line_left1 = false;
 		}
-		else if (g_adc_chan == 2)
+		else if (g_adc_chan == 1)
 		{
 			if (ADCH > adc_comp)
 			{
@@ -254,7 +259,7 @@ ISR(ADC_vect)
             else
                 g_line_right1 = false;
 		}
-		else if (g_adc_chan == 3)
+		else if (g_adc_chan == 0)
 		{
 			if (ADCH > adc_comp)
 			{
@@ -346,7 +351,7 @@ volatile int g_mode_switch = 0;
 ISR(TIMER0_COMP_vect)
 {
 	// if button is pressed change g_mode
-	if (PINA & _BV(3))
+	if (!(PINA & _BV(3)))
 		g_mode_switch = 1;
 	else if (g_mode_switch)
 	{
