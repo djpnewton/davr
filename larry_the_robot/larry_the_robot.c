@@ -117,12 +117,10 @@ void init_status_led()
 
 void init_button_port()
 {
-	// output PORTA.1
+	// use PINA.3
 	DDRA = 255;
-	//DDRA |= _BV(1);
 	DDRA &= ~_BV(3);
-	PORTA |= _BV(1);
-	//PINA = 0;
+    PORTA |= _BV(3);
 }
 
 void init_button_timer()
